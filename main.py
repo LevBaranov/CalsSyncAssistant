@@ -33,6 +33,9 @@ def main():
     exchange_events = exchange_service.get_events()
 
     for exchange_event in exchange_events:
+        if exchange_event.isPrivate:
+            print(f"Event {exchange_event.summary} shouldn't sync")
+            continue
         if exchange_event.response_type in ["Accept", "Organizer"]:
             check_and_update_event(exchange_event, second_gmail_cal_id, google_service)
         else:
