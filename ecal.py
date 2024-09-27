@@ -34,16 +34,19 @@ class ECall:
                 end=event.end,
                 location=event.location,
                 response_type=event.my_response_type,
+                isPrivate=event.sensitivity == "Private"
             ))
 
         return events
 
     def create_event(self, event: Event):
+        sensitivity = "Private" if event.isPrivate else "Normal"
         item = CalendarItem(
             folder=self.account.calendar,
             subject=event.summary,
             start=event.start,
-            end=event.end
+            end=event.end,
+            sensitivity=sensitivity
         ).save()
 
         return Event(
@@ -54,4 +57,5 @@ class ECall:
             end=item.end,
             location=event.location,
             response_type=event.response_type,
+            isPrivate=event.isPrivate
         )

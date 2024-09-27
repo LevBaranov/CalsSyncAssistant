@@ -100,7 +100,8 @@ class GCall:
                 start=dateutil.parser.isoparse(event.get("start").get("dateTime")),
                 end=dateutil.parser.isoparse(event.get("end").get("dateTime")),
                 location=event.get("location"),
-                response_type=event.get("transparency") if event.get("transparency") else event.get("status")
+                response_type=event.get("transparency") if event.get("transparency") else event.get("status"),
+                isPrivate=bool(event.get("extendedProperties").get("private")) if event.get("extendedProperties") else False
             )
 
             if event.get("extendedProperties"):
