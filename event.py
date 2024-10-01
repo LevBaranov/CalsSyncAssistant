@@ -13,4 +13,5 @@ class Event:
     end: datetime
     location: str
     response_type: str
+    isPrivate: bool
     body: str = field(init=False, repr=False)
