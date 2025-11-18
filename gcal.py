@@ -93,6 +93,8 @@ class GCall:
 
         events = []
         for event in events_result.get('items', []):
+            if event.get('eventType') and event.get('eventType') == 'birthday':     # синхронизация ДР не нужна
+                continue
             new_event = Event(
                 id=event.get("id"),
                 system="Google",
