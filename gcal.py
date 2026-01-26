@@ -1,5 +1,7 @@
 import os
-import datetime
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
+from typing import List
 
 import dateutil.parser
 from google.auth.transport.requests import Request
@@ -17,6 +19,8 @@ class GCall:
 
     def __init__(self):
         SCOPES = os.getenv("SCOPES").split(';')
+        self.SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL"))
+        self.USER_TIMEZONE = os.getenv("USER_TIMEZONE")
         self.credentials = self.__auth(SCOPES)
         self.service = build('calendar', 'v3', credentials=self.credentials)
 
@@ -45,13 +49,12 @@ class GCall:
         return credentials
 
     @staticmethod
-    def __create_event_date(event: Event, event_type='Exchange') -> dict:
-        if event.response_type in ["Accept", "Organizer"]:
-            summary = f"[{event.response_type}] {event.summary}"
-        else:
-            summary = event.summary
+    def __create_event_data(event: Event, event_type='Exchange') -> dict:
+        """
+        Подготовка данных для отправки в гугл-календарь.
+        """
         event_data = {
-            'summary': summary,
+            'summary': event.summary,
             'start': {
                 'dateTime': event.start.isoformat(),
                 'timeZone': 'UTC',
@@ -63,8 +66,8 @@ class GCall:
             "location": event.location,
             'extendedProperties': {
                 'private': {
-                    'externalId': event.id,
-                    'externalSystem': event.system,
+                    'isExternal': event_type == 'Exchange',
+                    'exchangeChangekey': event.exchange_changekey,
                     'responseType': event.response_type
                 }
             }
@@ -85,9 +88,28 @@ class GCall:
 
         return cals
 
-    def get_events(self, calendar_id, interval=10):
-        now = datetime.datetime.utcnow().isoformat() + 'Z'
-        end = (datetime.datetime.utcnow() + datetime.timedelta(days=interval)).isoformat() + 'Z'
+    def get_events(self, calendar_id, interval = None) -> List[Event]:
+        """
+        Получить список событий из переданного календаря, за переданное кол-во дней.
+        """
+        def calculate_response_type(e) -> str:
+
+            if e.get("extendedProperties"):
+                resp_type = event.get("extendedProperties").get("private").get("responseType")
+            else:
+                if e.get("transparency"):
+                    resp_type = "Organizer"
+                else:
+                    resp_type = "Organizer" if e.get("status") == "confirmed" else "Canceled"
+
+            return resp_type
+
+
+        if not interval:
+            interval = self.SYNC_INTERVAL
+
+        now = datetime.now(timezone.utc).isoformat()
+        end = (datetime.now(timezone.utc) + timedelta(days=interval)).isoformat()
         events_result = self.service.events().list(calendarId=calendar_id, timeMin=now, timeMax=end, singleEvents=True,
                                                    orderBy='startTime').execute()
 
@@ -95,30 +117,44 @@ class GCall:
         for event in events_result.get('items', []):
             if event.get('eventType') and event.get('eventType') == 'birthday':     # синхронизация ДР не нужна
                 continue
+            start_raw = event.get("start", {}).get("dateTime")
+            end_raw = event.get("end", {}).get("dateTime")
+
+            if not start_raw or not end_raw:    # all-day события пропускаем
+                continue
+
+            start_dt = dateutil.parser.isoparse(start_raw).astimezone(ZoneInfo(self.USER_TIMEZONE))
+            end_dt = dateutil.parser.isoparse(end_raw).astimezone(ZoneInfo(self.USER_TIMEZONE))
+
             new_event = Event(
                 id=event.get("id"),
                 system="Google",
                 summary=event.get("summary"),
-                start=dateutil.parser.isoparse(event.get("start").get("dateTime")),
-                end=dateutil.parser.isoparse(event.get("end").get("dateTime")),
+                start=start_dt,
+                end=end_dt,
                 location=event.get("location"),
-                response_type=event.get("transparency") if event.get("transparency") else event.get("status"),
-                isPrivate=True
+                response_type=calculate_response_type(event)
             )
 
             if event.get("extendedProperties"):
-                new_event.external_id = event.get("extendedProperties").get("private").get("externalId")
-                new_event.external_system = event.get("extendedProperties").get("private").get("externalSystem")
-
+                new_event.is_external = event.get("extendedProperties").get("private").get("isExternal")
+                new_event.exchange_changekey = event.get("extendedProperties").get("private").get("exchangeChangekey")
             events.append(new_event)
         return events
 
     def create_event(self, calendar_id, event: Event):
-        event_data = self.__create_event_date(event)
+        """
+        Создать новое событие в календаре
+        """
+        event_data = self.__create_event_data(event)
         event = self.service.events().insert(calendarId=calendar_id, body=event_data).execute()
         return event
 
-    def update_event(self, calendar_id, event_id, new_event: Event, event_type='Exchange'):
-        event_data = self.__create_event_date(new_event, event_type)
-        event = self.service.events().update(calendarId=calendar_id, eventId=event_id, body=event_data).execute()
-        return event
+    def delete_event(self, calendar_id, event):
+        """
+        Удалить событие из календаря
+        """
+        return self.service.events().delete(
+            calendarId=calendar_id,
+            eventId=event.id
+        ).execute()

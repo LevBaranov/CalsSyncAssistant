@@ -1,19 +1,8 @@
 import os
+
+from event import Event
 from gcal import GCall
 from ecal import ECall
-
-
-def check_and_update_event(event, account_id, service):
-    account_events = {ev.external_id: ev for ev in service.get_events(account_id) if hasattr(ev, 'external_id')}
-    if event.id in account_events.keys():
-        if account_events[event.id].start == event.start and account_events[event.id].end == event.end:
-            print(f"Event {event.summary} is exist in {account_id}")
-        else:
-            service.update_event(account_id, account_events[event.id].id, event)
-            print(f"Event {event.summary} modified in {account_id}")
-    else:
-        service.create_event(account_id, event)
-        print(f"Event {event.summary} create in {account_id}")
 
 
 def main():
@@ -22,24 +11,60 @@ def main():
     google_service = GCall()
     exchange_service = ECall()
 
-    for event in google_service.get_events(second_gmail_cal_id):
-        if not hasattr(event, 'external_id') and event.response_type != 'transparent':
-            new_event = exchange_service.create_event(event)
-            print(f"Event {event.summary} create in Exchange")
-            google_service.update_event(second_gmail_cal_id, event.id, new_event, "Bitrix")
-        else:
-            print(f"Event {event.summary} is exist in Exchange")
+    google_events  = { event.hash_id: event for event in google_service.get_events(second_gmail_cal_id) }
+    exchange_events = { event.hash_id: event for event in exchange_service.get_events() }
 
-    exchange_events = exchange_service.get_events()
+    def filter_events_into_create_and_delete(events_list: dict, set_event_hashes: set,
+                                             new_events: list = [], events_to_delete: list = []) \
+            -> tuple[list[Event], list[Event]]:
 
-    for exchange_event in exchange_events:
-        if exchange_event.isPrivate:
-            print(f"Event {exchange_event.summary} shouldn't sync")
-            continue
-        if exchange_event.response_type in ["Accept", "Organizer"]:
-            check_and_update_event(exchange_event, second_gmail_cal_id, google_service)
+        for _event_hash_id in set_event_hashes:
+            event = events_list.get(_event_hash_id)
+
+            if not event.is_external:
+                new_events.append(event)
+            else:
+                events_to_delete.append(event)
+
+        return new_events, events_to_delete
+
+    new_events, events_to_delete = filter_events_into_create_and_delete(google_events, (
+                set(google_events.keys()) - set(exchange_events.keys())))
+
+    new_events, events_to_delete = filter_events_into_create_and_delete(exchange_events, (
+                set(exchange_events.keys()) - set(google_events.keys())), new_events, events_to_delete)
+
+    for _event in new_events:
+
+        print(f"Найдено новое событие: {_event.summary} в календаре {_event.system}")
+        if _event.response_type in ["Accept", "Organizer"]:
+            google_calendar_id = second_gmail_cal_id
         else:
-            check_and_update_event(exchange_event, first_gmail_cal_id, google_service)
+            google_calendar_id = first_gmail_cal_id
+
+        if _event.system == "Google":
+            exchange_service.create_event(_event)
+            print(f"Событие: {_event.summary} добавлено в календарь Exchange")
+
+        if _event.system == "Exchange":
+            google_service.create_event(google_calendar_id, _event)
+            print(f"Событие: {_event.summary} добавлено в календарь Google")
+
+
+    for _event in events_to_delete:
+
+        if _event.response_type in ["Accept", "Organizer"]:
+            google_calendar_id = second_gmail_cal_id
+        else:
+            google_calendar_id = first_gmail_cal_id
+
+        if _event.system == "Google":
+            print(f"Событие: {_event.summary} удалено из календаря Google")
+            google_service.delete_event(google_calendar_id, _event)
+
+        if _event.system == "Exchange":
+            print(f"Событие: {_event.summary} удалено из календаря Exchange")
+            exchange_service.delete_event(_event)
 
 
 if __name__ == '__main__':
