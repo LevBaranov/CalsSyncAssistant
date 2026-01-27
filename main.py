@@ -12,6 +12,7 @@ def main():
     exchange_service = ECall()
 
     google_events  = { event.hash_id: event for event in google_service.get_events(second_gmail_cal_id) }
+    google_not_confirmed_events  = { event.hash_id: event for event in google_service.get_events(first_gmail_cal_id) if event.is_external }
     exchange_events = { event.hash_id: event for event in exchange_service.get_events() }
 
     def filter_events_into_create_and_delete(events_list: dict, set_event_hashes: set,
@@ -34,13 +35,21 @@ def main():
     new_events, events_to_delete = filter_events_into_create_and_delete(exchange_events, (
                 set(exchange_events.keys()) - set(google_events.keys())), new_events, events_to_delete)
 
+    _, events_to_delete = filter_events_into_create_and_delete(google_not_confirmed_events, (
+            set(google_not_confirmed_events.keys()) - set(exchange_events.keys())), [], events_to_delete)
+
     for _event in new_events:
 
         print(f"Найдено новое событие: {_event.summary} в календаре {_event.system}")
         if _event.response_type in ["Accept", "Organizer"]:
             google_calendar_id = second_gmail_cal_id
         else:
-            google_calendar_id = first_gmail_cal_id
+            if _event.hash_id not in google_not_confirmed_events.keys():
+                google_calendar_id = first_gmail_cal_id
+            else:
+                # Событие на самом деле было добавлено в календарь не подтверждённых встреч
+                print(f"Событие: {_event.summary} уже было добавлено в календарь Google")
+                continue
 
         if _event.system == "Google":
             exchange_service.create_event(_event)
