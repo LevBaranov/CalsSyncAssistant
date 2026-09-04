@@ -54,6 +54,13 @@ class ECall:
         end = now + datetime.timedelta(days=interval)
         events = []
         for _event in self.account.calendar.view(start=now, end=end).all():
+            # Пропускаем события на весь день (EWSDate) — у них нет времени и метода astimezone.
+            # Это консистентно с gcal.py:line 123 где all-day события пропускаются.
+            # Если нужно синхронизировать all-day, можно конвертировать EWSDate -> datetime на 00:00 в USER_TIMEZONE.
+            if not isinstance(_event.start, datetime.datetime) or not isinstance(_event.end, datetime.datetime):
+                continue
+            if _event.start is None or _event.end is None:
+                continue
             events.append(Event(
                 id=_event.id,
                 system="Exchange",
